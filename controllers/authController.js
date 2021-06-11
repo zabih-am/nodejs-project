@@ -15,6 +15,31 @@ const signToken = (id) => {
   });
 };
 
+const createSendToken = (user, statusCode, res) => {
+  const token = signToken(user._id);
+
+  const cookieOptions = {
+    expires: new Date(
+      Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000
+    ),
+    httpOnly: true
+  };
+  if (process.env.NODE_ENV === 'production') cookieOptions.secure = true;
+
+  res.cookie('jwt', token, cookieOptions);
+
+  // Remove password from output
+  user.password = undefined;
+  
+  res.status(statusCode).json({
+    status: 'success',
+    token,
+    data: {
+      user
+    },
+  });
+}
+
 exports.signup = catchAsync(async (req, res, next) => {
   // const newUser = await User.create(req.body) => this aproach is not secure because we create user uses all the data in the body the problem here is that any one can spcified the role as and admin
   //the secure version👇
@@ -26,15 +51,7 @@ exports.signup = catchAsync(async (req, res, next) => {
     passwordChangedAt: req.body.passwordChangedAt,
     role: req.body.role,
   });
-  const token = signToken(newUser._id);
-
-  res.status(201).json({
-    status: 'success',
-    token,
-    data: {
-      user: newUser,
-    },
-  });
+  createSendToken(newUser, 201, res)
 });
 
 exports.login = catchAsync(async (req, res, next) => {
@@ -54,11 +71,7 @@ exports.login = catchAsync(async (req, res, next) => {
   }
 
   //3) if everything ok send token to the client
-  const token = signToken(user._id);
-  res.status(200).json({
-    status: 'success',
-    token,
-  });
+  createSendToken(user, 200, res)
 });
 
 exports.protect = catchAsync(async (req, res, next) => {
@@ -98,6 +111,7 @@ exports.protect = catchAsync(async (req, res, next) => {
 
   //GRAND ACCESS TO PROTECTED ROUTE
   req.user = currentUser;
+  // console.log('currentUser', currentUser)
   next();
 });
 
@@ -175,9 +189,22 @@ exports.resetPassword = catchAsync(async(req, res, next) => {
   // 3) Update changedPasswordAt property for the user
     // we implement this feature in user model and before save the document by pre hook
   // 4) Log the user in, send JWT
-  const token = signToken(user._id);
-  res.status(200).json({
-    status: 'success',
-    token,
-  });
+  createSendToken(user, 200, res)
 });
+
+exports.updatePassword = catchAsync(async(req, res, next) => {
+  // 1) get user from collection
+  const user = await User.findById(req.user.id).select('+password')
+  console.log('user',user)
+  // 2) check if POSTed current password is correct
+  if(!(await user.correctPassword(req.body.passwordCurrent, user.password))){
+    return next(new AppError('your current password is wrong', 401))
+  }
+  // 3) if so, update password
+  user.password = req.body.password
+  user.confirmPassword = req.body.confirmPassword
+  await user.save()
+     // user.findByIdAndUpdate will not work as intended
+  // 4) log user in , send JWT
+  createSendToken(user, 200, res)
+})
